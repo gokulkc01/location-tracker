@@ -1,5 +1,7 @@
 const Circle = require('../models/Circle');
 const Permission = require('../models/Permission');
+const Invitation = require('../models/Invitation');
+const Notification = require('../models/Notification');
 
 exports.createCircle = async (req, res, next) => {
   try {
@@ -96,11 +98,40 @@ exports.inviteMember = async (req, res, next) => {
       });
     }
 
-    // Add member with pending status
-    circle.members.push({
-      userId: userToInvite._id,
-      role: 'member',
+    // Check for existing pending invitation in Invitation collection
+    const existingInvitation = await Invitation.findOne({
+      circleId,
+      invitedUser: userToInvite._id,
       status: 'pending'
+    });
+
+    if (existingInvitation) {
+      return res.status(400).json({
+        success: false,
+        message: 'Invitation already sent to this user'
+      });
+    }
+
+    // Create invitation document (so it shows in Invitations page)
+    const invitation = await Invitation.create({
+      circleId,
+      invitedBy: req.user.id,
+      invitedUser: userToInvite._id,
+      message: `Join ${circle.name}`
+    });
+
+    // Create notification for invited user
+    const notification = await Notification.create({
+      userId: userToInvite._id,
+      type: 'invitation',
+      title: 'Circle Invitation',
+      message: `${req.user.name} invited you to join "${circle.name}"`,
+      data: {
+        invitationId: invitation._id,
+        circleId: circle._id,
+        circleName: circle.name,
+        invitedBy: req.user.name
+      }
     });
 
     await circle.save();
@@ -108,13 +139,13 @@ exports.inviteMember = async (req, res, next) => {
     // Emit socket event to notify the invited user
     const io = req.app.get('io');
     if (io) {
-      io.emit('circle-invitation', {
-        recipientId: userToInvite._id.toString(),
-        circleId: circle._id,
-        circleName: circle.name,
-        invitedBy: req.user.name || req.user.email,
-        invitedByEmail: req.user.email,
-        timestamp: new Date()
+      // Send to user's personal room
+      io.to(`user:${userToInvite._id}`).emit('notification', {
+        notification,
+        invitation: await invitation.populate([
+          { path: 'invitedBy', select: 'name email profilePicture' },
+          { path: 'circleId', select: 'name' }
+        ])
       });
     }
 
@@ -153,15 +184,29 @@ exports.acceptInvitation = async (req, res, next) => {
     member.status = 'active';
     await circle.save();
 
+    // Get all active member IDs including the new member
+    const activeMemberIds = circle.members
+      .filter(m => m.status === 'active')
+      .map(m => m.userId);
+
     // Create permission for new member
     await Permission.create({
       circleId: circle._id,
       userId: req.user.id,
       sharingEnabled: true,
-      allowedUsers: circle.members
-        .filter(m => m.status === 'active')
-        .map(m => m.userId)
+      allowedUsers: activeMemberIds
     });
+
+    // Update existing members' permissions to include the new member
+    await Permission.updateMany(
+      {
+        circleId: circle._id,
+        userId: { $ne: req.user.id }
+      },
+      {
+        $addToSet: { allowedUsers: req.user.id }
+      }
+    );
 
     // Emit socket event to notify circle members
     const io = req.app.get('io');
@@ -268,6 +313,74 @@ exports.declineInvitation = async (req, res, next) => {
     res.status(200).json({
       success: true,
       message: 'Invitation declined'
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+// Sync permissions for all circle members (fixes missing permissions)
+exports.syncCirclePermissions = async (req, res, next) => {
+  try {
+    const { circleId } = req.params;
+
+    const circle = await Circle.findById(circleId);
+    if (!circle) {
+      return res.status(404).json({
+        success: false,
+        message: 'Circle not found'
+      });
+    }
+
+    // Check if requester is member of circle
+    const isMember = circle.members.some(
+      m => m.userId.toString() === req.user.id && m.status === 'active'
+    );
+
+    if (!isMember) {
+      return res.status(403).json({
+        success: false,
+        message: 'You are not a member of this circle'
+      });
+    }
+
+    // Get all active member IDs
+    const activeMemberIds = circle.members
+      .filter(m => m.status === 'active')
+      .map(m => m.userId);
+
+    // Create or update permissions for all active members
+    const results = await Promise.all(
+      activeMemberIds.map(async (userId) => {
+        const existingPermission = await Permission.findOne({
+          circleId: circle._id,
+          userId
+        });
+
+        if (!existingPermission) {
+          // Create new permission
+          await Permission.create({
+            circleId: circle._id,
+            userId,
+            sharingEnabled: true,
+            allowedUsers: activeMemberIds
+          });
+          return { userId, action: 'created' };
+        } else {
+          // Update existing permission to include all members
+          await Permission.updateOne(
+            { _id: existingPermission._id },
+            { $addToSet: { allowedUsers: { $each: activeMemberIds } } }
+          );
+          return { userId, action: 'updated' };
+        }
+      })
+    );
+
+    res.status(200).json({
+      success: true,
+      message: 'Permissions synced successfully',
+      results
     });
   } catch (error) {
     next(error);

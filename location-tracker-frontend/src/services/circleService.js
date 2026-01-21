@@ -35,4 +35,9 @@ export const circleService = {
         const response = await api.delete(`/circles/${circleId}/leave`);
         return response.data;
     },
+
+    syncPermissions: async (circleId) => {
+        const response = await api.post(`/circles/${circleId}/sync-permissions`);
+        return response.data;
+    },
 };

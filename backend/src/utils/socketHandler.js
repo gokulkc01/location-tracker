@@ -1,17 +1,19 @@
 const jwt = require('jsonwebtoken');
 const User = require('../models/User');
 const Location = require('../models/Location');
+const Notification = require('../models/Notification');
 const Geofence = require('../models/Geofence');
+const Permission = require('../models/Permission');
+const Circle = require('../models/Circle');
 const { isInsideGeofence } = require('./geoUtils');
 
 const connectedUsers = new Map(); // userId -> socketId
 
 const initializeSocket = (io) => {
-  // Authentication middleware
   io.use(async (socket, next) => {
     try {
       const token = socket.handshake.auth.token;
-      
+
       if (!token) {
         return next(new Error('Authentication error'));
       }
@@ -35,6 +37,9 @@ const initializeSocket = (io) => {
     console.log(`User connected: ${socket.userId}`);
     connectedUsers.set(socket.userId, socket.id);
 
+    // Join user's personal room for notifications
+    socket.join(`user:${socket.userId}`);
+
     // Join circle rooms
     socket.on('join-circles', async (circleIds) => {
       try {
@@ -52,7 +57,65 @@ const initializeSocket = (io) => {
       try {
         const { circleId, latitude, longitude, accuracy, battery } = data;
 
-        // Save location to database
+        console.log(`Location update from user ${socket.userId} for circle ${circleId}`);
+
+        // Verify user is active member of circle
+        const circle = await Circle.findById(circleId);
+        if (!circle) {
+          console.log(`Circle ${circleId} not found`);
+          socket.emit('location-error', { message: 'Circle not found' });
+          return;
+        }
+
+        const isMember = circle.members.some(
+          m => m.userId.toString() === socket.userId && m.status === 'active'
+        );
+
+        if (!isMember) {
+          console.log(`User ${socket.userId} is not an active member of circle ${circleId}`);
+          console.log('Circle members:', circle.members.map(m => ({ id: m.userId.toString(), status: m.status })));
+          socket.emit('location-error', { message: 'You are not a member of this circle' });
+          return;
+        }
+
+        // Check if permission exists, create if not
+        let permission = await Permission.findOne({
+          circleId,
+          userId: socket.userId
+        });
+
+        if (!permission) {
+          // Create permission for this user
+          const activeMemberIds = circle.members
+            .filter(m => m.status === 'active')
+            .map(m => m.userId);
+
+          permission = await Permission.create({
+            circleId,
+            userId: socket.userId,
+            sharingEnabled: true,
+            allowedUsers: activeMemberIds
+          });
+
+          // Also update other members' permissions to include this user
+          await Permission.updateMany(
+            {
+              circleId,
+              userId: { $ne: socket.userId }
+            },
+            {
+              $addToSet: { allowedUsers: socket.userId }
+            }
+          );
+
+          console.log(`Created missing permission for user ${socket.userId} in circle ${circleId}`);
+        }
+
+        if (!permission.sharingEnabled) {
+          socket.emit('location-error', { message: 'Location sharing is disabled' });
+          return;
+        }
+
         const location = await Location.create({
           userId: socket.userId,
           circleId,
@@ -66,6 +129,7 @@ const initializeSocket = (io) => {
         io.to(`circle:${circleId}`).emit('location-updated', {
           userId: socket.userId,
           userName: socket.user.name,
+          userEmail: socket.user.email,
           location: {
             latitude,
             longitude,
@@ -85,6 +149,15 @@ const initializeSocket = (io) => {
             userName: socket.user.name,
             battery
           });
+
+          // Create notification
+          await Notification.create({
+            userId: socket.userId,
+            type: 'low_battery',
+            title: 'Low Battery',
+            message: `Your battery is at ${battery}%`,
+            data: { battery }
+          });
         }
 
       } catch (error) {
@@ -98,7 +171,6 @@ const initializeSocket = (io) => {
       try {
         const { circleId, latitude, longitude, message } = data;
 
-        // Broadcast SOS to all circle members
         io.to(`circle:${circleId}`).emit('sos-received', {
           userId: socket.userId,
           userName: socket.user.name,
@@ -113,7 +185,6 @@ const initializeSocket = (io) => {
       }
     });
 
-    // Handle disconnect
     socket.on('disconnect', () => {
       console.log(`User disconnected: ${socket.userId}`);
       connectedUsers.delete(socket.userId);
@@ -121,7 +192,6 @@ const initializeSocket = (io) => {
   });
 };
 
-// Check if user entered/exited any geofences
 const checkGeofences = async (userId, circleId, latitude, longitude, io) => {
   try {
     const geofences = await Geofence.find({ circleId });
@@ -135,8 +205,6 @@ const checkGeofences = async (userId, circleId, latitude, longitude, io) => {
         fence.radius
       );
 
-      // You would need to track previous state to determine enter/exit
-      // For simplicity, we'll just emit if inside
       if (isInside) {
         io.to(`circle:${circleId}`).emit('geofence-event', {
           userId,

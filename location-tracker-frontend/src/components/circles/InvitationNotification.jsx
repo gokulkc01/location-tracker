@@ -1,19 +1,34 @@
 import { useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { UserPlus, Check, X, Users } from 'lucide-react';
-import { circleService } from '../../services/circleService';
+import { invitationService } from '../../services/invitationService';
 import { useSocket } from '../../hooks/useSocket';
 
 export const InvitationNotification = ({ invitation, onResponse }) => {
     const [loading, setLoading] = useState(false);
-    const { clearInvitation } = useSocket();
+    const { clearInvitation, loadPendingInvitations } = useSocket();
+
+    // Get the invitation ID - handle both formats (from API and socket)
+    const invitationId = invitation._id || invitation.id;
+
+    // Get inviter name - handle both populated object and string
+    const inviterName = typeof invitation.invitedBy === 'object'
+        ? invitation.invitedBy?.name
+        : invitation.invitedBy;
+
+    // Get circle name - handle both populated object and string
+    const circleName = typeof invitation.circleId === 'object'
+        ? invitation.circleId?.name
+        : invitation.circleName;
 
     const handleAccept = async () => {
         setLoading(true);
         try {
-            await circleService.acceptInvitation(invitation.circleId);
-            clearInvitation(invitation.circleId);
+            await invitationService.acceptInvitation(invitationId);
+            clearInvitation(invitationId);
             onResponse?.('accepted', invitation);
+            // Refresh invitations list
+            loadPendingInvitations?.();
         } catch (error) {
             console.error('Failed to accept invitation:', error);
         } finally {
@@ -24,9 +39,11 @@ export const InvitationNotification = ({ invitation, onResponse }) => {
     const handleDecline = async () => {
         setLoading(true);
         try {
-            await circleService.declineInvitation(invitation.circleId);
-            clearInvitation(invitation.circleId);
+            await invitationService.rejectInvitation(invitationId);
+            clearInvitation(invitationId);
             onResponse?.('declined', invitation);
+            // Refresh invitations list
+            loadPendingInvitations?.();
         } catch (error) {
             console.error('Failed to decline invitation:', error);
         } finally {
@@ -48,11 +65,11 @@ export const InvitationNotification = ({ invitation, onResponse }) => {
                 <div className="flex-1 min-w-0">
                     <h4 className="font-semibold text-gray-900">Circle Invitation</h4>
                     <p className="text-sm text-gray-600 mt-1">
-                        <span className="font-medium">{invitation.invitedBy}</span> invited you to join
+                        <span className="font-medium">{inviterName || 'Someone'}</span> invited you to join
                     </p>
                     <div className="flex items-center gap-2 mt-2 bg-gray-50 rounded-lg px-3 py-2">
                         <Users className="w-4 h-4 text-gray-500" />
-                        <span className="font-medium text-gray-900">{invitation.circleName}</span>
+                        <span className="font-medium text-gray-900">{circleName || 'a circle'}</span>
                     </div>
                 </div>
             </div>
@@ -94,7 +111,7 @@ export const InvitationsList = () => {
             <AnimatePresence>
                 {pendingInvitations.map((invitation) => (
                     <InvitationNotification
-                        key={invitation.id || invitation.circleId}
+                        key={invitation._id || invitation.id || invitation.circleId}
                         invitation={invitation}
                         onResponse={handleResponse}
                     />

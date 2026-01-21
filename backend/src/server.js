@@ -9,10 +9,23 @@ const { initializeSocket } = require('./utils/socketHandler');
 
 const app = express();
 const server = http.createServer(app);
+
+// Allow multiple frontend ports for development
+const allowedOrigins = [
+  'http://localhost:5173',
+  'http://localhost:5174',
+  'http://localhost:5175',
+  'http://localhost:5176',
+  'http://localhost:5177',
+  'http://localhost:3000',
+  process.env.CLIENT_URL
+].filter(Boolean);
+
 const io = new Server(server, {
   cors: {
-    origin: process.env.CLIENT_URL || 'http://localhost:5173',
-    methods: ['GET', 'POST']
+    origin: allowedOrigins,
+    methods: ['GET', 'POST'],
+    credentials: true
   }
 });
 
@@ -26,7 +39,10 @@ initializeSocket(io);
 app.set('io', io);
 
 // Middleware
-app.use(cors());
+app.use(cors({
+  origin: allowedOrigins,
+  credentials: true
+}));
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
@@ -36,6 +52,8 @@ app.use('/api/circles', require('./routes/circles'));
 app.use('/api/locations', require('./routes/locations'));
 app.use('/api/permissions', require('./routes/permissions'));
 app.use('/api/geofences', require('./routes/geofences'));
+app.use('/api/invitations', require('./routes/invitations'));
+app.use('/api/notifications', require('./routes/notification'));
 
 // Health check
 app.get('/health', (req, res) => {

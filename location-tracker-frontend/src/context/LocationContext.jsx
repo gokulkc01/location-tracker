@@ -1,4 +1,4 @@
-import { createContext, useState, useEffect, useContext } from 'react';
+import { createContext, useState, useEffect, useContext, useRef } from 'react';
 import { SocketContext } from './SocketContext';
 
 export const LocationContext = createContext();
@@ -9,12 +9,16 @@ export const LocationProvider = ({ children }) => {
   const [tracking, setTracking] = useState(false);
   const [error, setError] = useState(null);
   const { updateLocation } = useContext(SocketContext);
+  const circleIdRef = useRef(null);
+  const intervalRef = useRef(null);
 
   const startTracking = (circleId) => {
     if (!navigator.geolocation) {
       setError('Geolocation is not supported by your browser');
       return;
     }
+
+    circleIdRef.current = circleId;
 
     const id = navigator.geolocation.watchPosition(
       (position) => {
@@ -35,10 +39,30 @@ export const LocationProvider = ({ children }) => {
       },
       {
         enableHighAccuracy: true,
-        timeout: 5000,
-        maximumAge: 0,
+        timeout: 10000,
+        maximumAge: 5000, // Allow slightly cached position for background tabs
       }
     );
+
+    // Also set up a backup interval for background tabs (every 30 seconds)
+    intervalRef.current = setInterval(() => {
+      if (circleIdRef.current) {
+        navigator.geolocation.getCurrentPosition(
+          (position) => {
+            const locationData = {
+              circleId: circleIdRef.current,
+              latitude: position.coords.latitude,
+              longitude: position.coords.longitude,
+              accuracy: position.coords.accuracy,
+              battery: null,
+            };
+            updateLocation(locationData);
+          },
+          () => { }, // Silently fail
+          { enableHighAccuracy: false, timeout: 5000, maximumAge: 10000 }
+        );
+      }
+    }, 30000);
 
     setWatchId(id);
     setTracking(true);
@@ -50,6 +74,11 @@ export const LocationProvider = ({ children }) => {
       setWatchId(null);
       setTracking(false);
     }
+    if (intervalRef.current) {
+      clearInterval(intervalRef.current);
+      intervalRef.current = null;
+    }
+    circleIdRef.current = null;
   };
 
   const getCurrentPosition = () => {
@@ -62,6 +91,9 @@ export const LocationProvider = ({ children }) => {
     return () => {
       if (watchId !== null) {
         navigator.geolocation.clearWatch(watchId);
+      }
+      if (intervalRef.current) {
+        clearInterval(intervalRef.current);
       }
     };
   }, [watchId]);

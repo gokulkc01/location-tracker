@@ -10,6 +10,8 @@ import { Map } from './pages/Map';
 import { Settings } from './pages/Settings';
 import { Geofences } from './pages/Geofences';
 import { useAuth } from './hooks/useAuth';
+import { Invitations } from './pages/Invitations';
+
 import './styles/globals.css';
 
 const ProtectedRoute = ({ children }) => {
@@ -43,6 +45,7 @@ function App() {
                 <Route path="map" element={<Map />} />
                 <Route path="geofences" element={<Geofences />} />
                 <Route path="settings" element={<Settings />} />
+                <Route path="invitations" element={<Invitations />} />
                 <Route path="*" element={<Navigate to="/dashboard" replace />} />
               </Route>
             </Routes>

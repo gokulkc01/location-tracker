@@ -7,7 +7,8 @@ const {
   acceptInvitation,
   declineInvitation,
   leaveCircle,
-  getPendingInvitations
+  getPendingInvitations,
+  syncCirclePermissions
 } = require('../controllers/circleController');
 const { protect } = require('../middleware/auth');
 
@@ -19,6 +20,7 @@ router.get('/invitations', getPendingInvitations);
 router.post('/:circleId/invite', inviteMember);
 router.post('/:circleId/accept', acceptInvitation);
 router.post('/:circleId/decline', declineInvitation);
+router.post('/:circleId/sync-permissions', syncCirclePermissions);
 router.delete('/:circleId/leave', leaveCircle);
 
 module.exports = router;

@@ -9,13 +9,15 @@ import { Loader } from '../components/common/Loader';
 import { circleService } from '../services/circleService';
 import { locationService } from '../services/locationService';
 import { useLocation } from '../hooks/UseLocation';
+import { useSocket } from '../hooks/useSocket';
 
 export const Map = () => {
   const [circles, setCircles] = useState([]);
   const [selectedCircle, setSelectedCircle] = useState(null);
   const [locations, setLocations] = useState([]);
   const [loading, setLoading] = useState(true);
-  const { tracking, startTracking, stopTracking, currentLocation } = useLocation();
+  const { tracking, startTracking, stopTracking, currentLocation, error: locationError } = useLocation();
+  const { connected, joinCircles } = useSocket();
 
   useEffect(() => {
     loadCircles();
@@ -28,6 +30,13 @@ export const Map = () => {
       return () => clearInterval(interval);
     }
   }, [selectedCircle]);
+
+  // Join circle rooms when circles are loaded and socket is connected
+  useEffect(() => {
+    if (circles.length > 0 && connected) {
+      joinCircles(circles.map(c => c._id));
+    }
+  }, [circles, connected, joinCircles]);
 
   const loadCircles = async () => {
     try {
@@ -60,11 +69,23 @@ export const Map = () => {
     }
   };
 
+  const handleSyncPermissions = async () => {
+    if (!selectedCircle) return;
+    try {
+      await circleService.syncPermissions(selectedCircle._id);
+      alert('Permissions synced! Please refresh the page.');
+      loadLocations(selectedCircle._id);
+    } catch (error) {
+      console.error('Failed to sync permissions:', error);
+      alert('Failed to sync permissions');
+    }
+  };
+
   const mapCenter = currentLocation
     ? [currentLocation.latitude, currentLocation.longitude]
     : locations.length > 0
-    ? [locations[0].latitude, locations[0].longitude]
-    : undefined;
+      ? [locations[0].latitude, locations[0].longitude]
+      : undefined;
 
   if (loading) {
     return (
@@ -77,7 +98,7 @@ export const Map = () => {
   return (
     <div className="h-screen flex flex-col">
       <Header title="Live Map" />
-      
+
       <div className="flex-1 p-6 flex gap-6">
         {/* Sidebar */}
         <div className="w-80 space-y-4 overflow-y-auto">
@@ -88,11 +109,10 @@ export const Map = () => {
                 <button
                   key={circle._id}
                   onClick={() => setSelectedCircle(circle)}
-                  className={`w-full text-left px-4 py-3 rounded-lg transition-colors ${
-                    selectedCircle?._id === circle._id
-                      ? 'bg-primary-50 text-primary-600'
-                      : 'hover:bg-gray-50'
-                  }`}
+                  className={`w-full text-left px-4 py-3 rounded-lg transition-colors ${selectedCircle?._id === circle._id
+                    ? 'bg-primary-50 text-primary-600'
+                    : 'hover:bg-gray-50'
+                    }`}
                 >
                   <p className="font-medium">{circle.name}</p>
                   <p className="text-sm text-gray-500">
@@ -105,12 +125,35 @@ export const Map = () => {
 
           <Card>
             <h3 className="font-semibold text-gray-900 mb-4">Location Sharing</h3>
+
+            {/* Connection status */}
+            <div className="flex items-center gap-2 mb-3">
+              <div className={`h-2 w-2 rounded-full ${connected ? 'bg-green-500' : 'bg-red-500'}`} />
+              <span className="text-xs text-gray-500">
+                {connected ? 'Connected to server' : 'Disconnected - reconnecting...'}
+              </span>
+            </div>
+
             <Toggle
               enabled={tracking}
               onChange={handleTrackingToggle}
               label="Share my location"
+              disabled={!connected}
             />
-            {tracking && (
+
+            {!connected && (
+              <p className="text-xs text-red-500 mt-2">
+                Cannot share location - not connected to server
+              </p>
+            )}
+
+            {locationError && (
+              <p className="text-xs text-red-500 mt-2">
+                Error: {locationError}
+              </p>
+            )}
+
+            {tracking && connected && (
               <p className="text-xs text-gray-500 mt-2">
                 Your location is being shared with this circle
               </p>
@@ -120,23 +163,68 @@ export const Map = () => {
           <Card>
             <h3 className="font-semibold text-gray-900 mb-4">Circle Members</h3>
             <div className="space-y-3">
-              {locations.map((location) => (
-                <div key={location._id} className="flex items-center gap-3">
-                  <div className="w-8 h-8 bg-primary-100 rounded-full flex items-center justify-center text-primary-600 font-semibold text-sm">
-                    {location.userId?.name?.charAt(0)}
-                  </div>
-                  <div className="flex-1">
-                    <p className="text-sm font-medium text-gray-900">
-                      {location.userId?.name}
-                    </p>
-                    <p className="text-xs text-gray-500">
-                      Battery: {location.battery || 'N/A'}%
-                    </p>
-                  </div>
-                  <div className="h-2 w-2 bg-green-500 rounded-full" />
-                </div>
-              ))}
+              {selectedCircle?.members
+                ?.filter(m => m.status === 'active')
+                .map((member) => {
+                  // Get member ID - handle both string and populated object
+                  const memberId = typeof member.userId === 'object'
+                    ? member.userId?._id
+                    : member.userId;
+
+                  // Find location by comparing IDs as strings
+                  const memberLocation = locations.find(loc => {
+                    const locUserId = typeof loc.userId === 'object'
+                      ? loc.userId?._id
+                      : loc.userId;
+                    return String(locUserId) === String(memberId);
+                  });
+
+                  const memberName = typeof member.userId === 'object'
+                    ? member.userId?.name
+                    : 'Unknown';
+
+                  // Check if location is recent (within last 5 minutes)
+                  const isLocationRecent = memberLocation &&
+                    (Date.now() - new Date(memberLocation.timestamp).getTime()) < 5 * 60 * 1000;
+
+                  // Format last seen time
+                  const getLastSeen = () => {
+                    if (!memberLocation) return 'Location not shared';
+                    const diff = Date.now() - new Date(memberLocation.timestamp).getTime();
+                    const minutes = Math.floor(diff / 60000);
+                    if (minutes < 1) return 'Active now';
+                    if (minutes < 60) return `Last seen ${minutes}m ago`;
+                    const hours = Math.floor(minutes / 60);
+                    if (hours < 24) return `Last seen ${hours}h ago`;
+                    return `Last seen ${Math.floor(hours / 24)}d ago`;
+                  };
+
+                  return (
+                    <div key={memberId} className="flex items-center gap-3">
+                      <div className="w-8 h-8 bg-primary-100 rounded-full flex items-center justify-center text-primary-600 font-semibold text-sm">
+                        {memberName?.charAt(0) || '?'}
+                      </div>
+                      <div className="flex-1">
+                        <p className="text-sm font-medium text-gray-900">
+                          {memberName || 'Unknown'}
+                        </p>
+                        <p className="text-xs text-gray-500">
+                          {memberLocation && isLocationRecent
+                            ? `Battery: ${memberLocation.battery || 'N/A'}%`
+                            : getLastSeen()}
+                        </p>
+                      </div>
+                      <div className={`h-2 w-2 rounded-full ${isLocationRecent ? 'bg-green-500' : memberLocation ? 'bg-yellow-500' : 'bg-gray-300'}`} />
+                    </div>
+                  );
+                })}
             </div>
+            <button
+              onClick={handleSyncPermissions}
+              className="mt-4 w-full text-xs text-primary-600 hover:text-primary-700 underline"
+            >
+              Fix location sharing issues
+            </button>
           </Card>
         </div>
 

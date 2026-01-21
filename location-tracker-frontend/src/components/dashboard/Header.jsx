@@ -1,32 +1,75 @@
 import { Bell, Menu } from 'lucide-react';
+import { useState, useEffect } from 'react';
 import { Badge } from '../common/Badge';
 import { useSocket } from '../../hooks/useSocket';
+import { NotificationPanel } from '../notifications/NotificationPanel';
+import { notificationService } from '../../services/notificationService';
 
 export const Header = ({ title, onMenuClick }) => {
-  const { notifications } = useSocket();
+  const { socket } = useSocket();
+  const [showNotifications, setShowNotifications] = useState(false);
+  const [unreadCount, setUnreadCount] = useState(0);
+
+  useEffect(() => {
+    loadUnreadCount();
+
+    // Listen for new notifications via socket
+    if (socket) {
+      socket.on('notification', () => {
+        loadUnreadCount();
+      });
+    }
+
+    return () => {
+      if (socket) {
+        socket.off('notification');
+      }
+    };
+  }, [socket]);
+
+  const loadUnreadCount = async () => {
+    try {
+      const data = await notificationService.getNotifications(true);
+      setUnreadCount(data.unreadCount);
+    } catch (error) {
+      console.error('Failed to load unread count:', error);
+    }
+  };
 
   return (
-    <header className="bg-white border-b border-gray-200 px-6 py-4">
-      <div className="flex items-center justify-between">
-        <div className="flex items-center gap-4">
-          <button
-            onClick={onMenuClick}
-            className="lg:hidden text-gray-600 hover:text-gray-900"
-          >
-            <Menu className="h-6 w-6" />
-          </button>
-          <h2 className="text-2xl font-bold text-gray-900">{title}</h2>
-        </div>
+    <>
+      <header className="bg-white border-b border-gray-200 px-6 py-4">
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-4">
+            <button
+              onClick={onMenuClick}
+              className="lg:hidden text-gray-600 hover:text-gray-900"
+            >
+              <Menu className="h-6 w-6" />
+            </button>
+            <h2 className="text-2xl font-bold text-gray-900">{title}</h2>
+          </div>
 
-        <div className="flex items-center gap-4">
-          <button className="relative p-2 text-gray-600 hover:text-gray-900 hover:bg-gray-100 rounded-lg transition-colors">
-            <Bell className="h-5 w-5" />
-            {notifications.length > 0 && (
-              <span className="absolute top-1 right-1 h-2 w-2 bg-red-500 rounded-full" />
-            )}
-          </button>
+          <div className="flex items-center gap-4">
+            <button
+              onClick={() => setShowNotifications(true)}
+              className="relative p-2 text-gray-600 hover:text-gray-900 hover:bg-gray-100 rounded-lg transition-colors"
+            >
+              <Bell className="h-5 w-5" />
+              {unreadCount > 0 && (
+                <span className="absolute top-1 right-1 h-4 w-4 bg-red-500 rounded-full flex items-center justify-center text-xs text-white font-bold">
+                  {unreadCount > 9 ? '9+' : unreadCount}
+                </span>
+              )}
+            </button>
+          </div>
         </div>
-      </div>
-    </header>
+      </header>
+
+      <NotificationPanel
+        isOpen={showNotifications}
+        onClose={() => setShowNotifications(false)}
+      />
+    </>
   );
 };

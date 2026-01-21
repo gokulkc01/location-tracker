@@ -1,6 +1,7 @@
 import { createContext, useEffect, useState, useRef, useCallback } from 'react';
 import { io } from 'socket.io-client';
 import { authService } from '../services/authService';
+import { invitationService } from '../services/invitationService';
 
 export const SocketContext = createContext();
 
@@ -25,12 +26,25 @@ export const SocketProvider = ({ children }) => {
     }, []);
 
     const clearInvitation = useCallback((circleId) => {
-        setPendingInvitations((prev) => prev.filter((inv) => inv.circleId !== circleId));
+        setPendingInvitations((prev) => prev.filter((inv) => inv.circleId !== circleId && inv._id !== circleId));
+    }, []);
+
+    // Load pending invitations from API
+    const loadPendingInvitations = useCallback(async () => {
+        try {
+            const invitations = await invitationService.getMyInvitations();
+            setPendingInvitations(invitations);
+        } catch (error) {
+            console.error('Failed to load pending invitations:', error);
+        }
     }, []);
 
     useEffect(() => {
         const token = authService.getToken();
         if (!token) return;
+
+        // Load existing pending invitations on startup
+        loadPendingInvitations();
 
         const newSocket = io(SOCKET_URL, {
             auth: { token },
@@ -100,6 +114,31 @@ export const SocketProvider = ({ children }) => {
             }
         });
 
+        // Handle notification events from backend (includes invitations)
+        newSocket.on('notification', (data) => {
+            const { notification, invitation } = data;
+
+            // If it's an invitation notification, add to pending invitations
+            if (notification?.type === 'invitation' && invitation) {
+                setPendingInvitations((prev) => {
+                    // Avoid duplicates
+                    const exists = prev.some(inv => inv._id === invitation._id);
+                    if (exists) return prev;
+                    return [invitation, ...prev];
+                });
+            }
+
+            // Add to notifications
+            if (notification) {
+                addNotification({
+                    type: notification.type,
+                    title: notification.title,
+                    message: notification.message,
+                    data: notification.data,
+                });
+            }
+        });
+
         newSocket.on('member-joined', (data) => {
             addNotification({
                 type: 'success',
@@ -125,7 +164,10 @@ export const SocketProvider = ({ children }) => {
 
     const updateLocation = useCallback((data) => {
         if (socketRef.current && connected) {
+            console.log('Emitting location-update:', data);
             socketRef.current.emit('location-update', data);
+        } else {
+            console.warn('Cannot emit location - socket not connected. Connected:', connected, 'Socket:', !!socketRef.current);
         }
     }, [connected]);
 
@@ -142,6 +184,7 @@ export const SocketProvider = ({ children }) => {
         pendingInvitations,
         clearNotification,
         clearInvitation,
+        loadPendingInvitations,
         joinCircles,
         updateLocation,
         sendSOS,
