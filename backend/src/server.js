@@ -10,7 +10,7 @@ const { initializeSocket } = require('./utils/socketHandler');
 const app = express();
 const server = http.createServer(app);
 
-// Allow multiple frontend ports for development
+// Allow multiple frontend ports and ngrok domains
 const allowedOrigins = [
   'http://localhost:5173',
   'http://localhost:5174',
@@ -21,12 +21,30 @@ const allowedOrigins = [
   process.env.CLIENT_URL
 ].filter(Boolean);
 
+// Dynamic CORS to allow any ngrok domain
+const corsOptions = {
+  origin: function (origin, callback) {
+    // Allow requests with no origin (mobile apps, curl, etc.)
+    if (!origin) return callback(null, true);
+
+    // Allow ngrok domains
+    if (origin.includes('ngrok-free.dev') || origin.includes('ngrok.io')) {
+      return callback(null, true);
+    }
+
+    // Allow listed origins
+    if (allowedOrigins.includes(origin)) {
+      return callback(null, true);
+    }
+
+    callback(null, true); // Allow all for development
+  },
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+  credentials: true
+};
+
 const io = new Server(server, {
-  cors: {
-    origin: allowedOrigins,
-    methods: ['GET', 'POST'],
-    credentials: true
-  }
+  cors: corsOptions
 });
 
 // Connect to database
@@ -39,10 +57,7 @@ initializeSocket(io);
 app.set('io', io);
 
 // Middleware
-app.use(cors({
-  origin: allowedOrigins,
-  credentials: true
-}));
+app.use(cors(corsOptions));
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 

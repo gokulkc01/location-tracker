@@ -22,19 +22,31 @@ export const MapView = ({ locations = [], geofences = [], center, onLocationClic
     }
   }, [map, center]);
 
+  // Force map to resize when container size changes (important for mobile)
+  useEffect(() => {
+    if (map) {
+      setTimeout(() => {
+        map.invalidateSize();
+      }, 100);
+    }
+  }, [map]);
+
   const mapCenter = center || MAP_CONFIG.defaultCenter;
 
   return (
     <motion.div
       initial={{ opacity: 0 }}
       animate={{ opacity: 1 }}
-      className="h-full w-full rounded-xl overflow-hidden shadow-lg"
+      className="h-full w-full rounded-none md:rounded-xl overflow-hidden shadow-lg"
+      style={{ minHeight: '300px' }}
     >
       <LeafletMap
         center={mapCenter}
         zoom={MAP_CONFIG.defaultZoom}
-        style={{ height: '100%', width: '100%' }}
+        style={{ height: '100%', width: '100%', minHeight: '300px' }}
         ref={setMap}
+        zoomControl={true}
+        attributionControl={true}
       >
         <TileLayer
           attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>'

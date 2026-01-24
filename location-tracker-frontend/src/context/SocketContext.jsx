@@ -2,10 +2,12 @@ import { createContext, useEffect, useState, useRef, useCallback } from 'react';
 import { io } from 'socket.io-client';
 import { authService } from '../services/authService';
 import { invitationService } from '../services/invitationService';
+import { getSocketUrl } from '../config';
 
 export const SocketContext = createContext();
 
-const SOCKET_URL = import.meta.env.VITE_SOCKET_URL || 'http://localhost:5000';
+const SOCKET_URL = getSocketUrl();
+console.log('Socket URL:', SOCKET_URL);
 
 export const SocketProvider = ({ children }) => {
     const [socket, setSocket] = useState(null);
@@ -50,7 +52,12 @@ export const SocketProvider = ({ children }) => {
             auth: { token },
             reconnection: true,
             reconnectionDelay: 1000,
-            reconnectionAttempts: 5,
+            reconnectionAttempts: 10,
+            timeout: 20000,
+            transports: ['websocket', 'polling'], // Try websocket first, fallback to polling
+            extraHeaders: {
+                'ngrok-skip-browser-warning': 'true'
+            }
         });
 
         newSocket.on('connect', () => {

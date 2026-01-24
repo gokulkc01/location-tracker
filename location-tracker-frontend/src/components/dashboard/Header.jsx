@@ -1,14 +1,20 @@
-import { Bell, Menu } from 'lucide-react';
+import { Bell, Menu, ArrowLeft } from 'lucide-react';
 import { useState, useEffect } from 'react';
+import { useNavigate, useLocation } from 'react-router-dom';
 import { Badge } from '../common/Badge';
 import { useSocket } from '../../hooks/useSocket';
 import { NotificationPanel } from '../notifications/NotificationPanel';
 import { notificationService } from '../../services/notificationService';
 
-export const Header = ({ title, onMenuClick }) => {
+export const Header = ({ title, onMenuClick, showBack = false }) => {
   const { socket } = useSocket();
   const [showNotifications, setShowNotifications] = useState(false);
   const [unreadCount, setUnreadCount] = useState(0);
+  const navigate = useNavigate();
+  const location = useLocation();
+
+  // Determine if we should show back button on mobile
+  const isSubPage = location.pathname !== '/' && location.pathname !== '/dashboard';
 
   useEffect(() => {
     loadUnreadCount();
@@ -36,21 +42,36 @@ export const Header = ({ title, onMenuClick }) => {
     }
   };
 
+  const handleMenuClick = () => {
+    if (onMenuClick) {
+      onMenuClick();
+    } else if (showBack || isSubPage) {
+      navigate(-1);
+    } else {
+      // Toggle sidebar on dashboard - navigate to dashboard
+      navigate('/dashboard');
+    }
+  };
+
   return (
     <>
-      <header className="bg-white border-b border-gray-200 px-6 py-4">
+      <header className="bg-white border-b border-gray-200 px-4 md:px-6 py-4 sticky top-0 z-30">
         <div className="flex items-center justify-between">
-          <div className="flex items-center gap-4">
+          <div className="flex items-center gap-3">
             <button
-              onClick={onMenuClick}
-              className="lg:hidden text-gray-600 hover:text-gray-900"
+              onClick={handleMenuClick}
+              className="p-2 text-gray-600 hover:text-gray-900 hover:bg-gray-100 rounded-lg transition-colors"
             >
-              <Menu className="h-6 w-6" />
+              {(showBack || isSubPage) ? (
+                <ArrowLeft className="h-5 w-5" />
+              ) : (
+                <Menu className="h-5 w-5" />
+              )}
             </button>
-            <h2 className="text-2xl font-bold text-gray-900">{title}</h2>
+            <h2 className="text-xl md:text-2xl font-bold text-gray-900">{title}</h2>
           </div>
 
-          <div className="flex items-center gap-4">
+          <div className="flex items-center gap-2">
             <button
               onClick={() => setShowNotifications(true)}
               className="relative p-2 text-gray-600 hover:text-gray-900 hover:bg-gray-100 rounded-lg transition-colors"
