@@ -258,7 +258,7 @@ Gokul KC
 <div align="center">
 
 ⭐ Star this repo if you find it useful!
-Made with ❤️ and ☕
+Made with ❤️
 </div> ```
 
 # Start the development server
